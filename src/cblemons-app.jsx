@@ -33,6 +33,7 @@ export default function CBLemonsApp() {
   useEffect(() => {
     loadLocations();
     loadAllergens();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Load sections when location changes
