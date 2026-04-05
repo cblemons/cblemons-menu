@@ -23,6 +23,11 @@ export default function CBLemonsApp() {
   const [appLoading, setAppLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  // Edit mode state
+  const [editingLocation, setEditingLocation] = useState(null);
+  const [editingSection, setEditingSection] = useState(null);
+  const [editingDish, setEditingDish] = useState(null);
+
   const [formData, setFormData] = useState({
     dishName: '',
     sectionId: '',
@@ -44,7 +49,6 @@ export default function CBLemonsApp() {
       loadLocations();
       loadAllergens();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   useEffect(() => {
@@ -236,6 +240,7 @@ export default function CBLemonsApp() {
     }
   };
 
+  // LOCATION CRUD
   const createLocation = async (e) => {
     e.preventDefault();
     const name = prompt('Enter location name (e.g., CB Lemons Seaside):');
@@ -253,13 +258,58 @@ export default function CBLemonsApp() {
       setSelectedLocation(data[0]);
       alert('Location created!');
     } catch (err) {
-      setError(err.message);
       alert('Error: ' + err.message);
     } finally {
       setAppLoading(false);
     }
   };
 
+  const updateLocation = async (locationId) => {
+    const name = prompt('Edit location name:', selectedLocation.name);
+    if (!name) return;
+
+    try {
+      setAppLoading(true);
+      const { error } = await supabase
+        .from('locations')
+        .update({ name })
+        .eq('id', locationId);
+      
+      if (error) throw error;
+      setSelectedLocation({ ...selectedLocation, name });
+      setLocations(locations.map(l => l.id === locationId ? { ...l, name } : l));
+      alert('Location updated!');
+    } catch (err) {
+      alert('Error: ' + err.message);
+    } finally {
+      setAppLoading(false);
+    }
+  };
+
+  const deleteLocation = async (locationId) => {
+    if (!window.confirm('Delete this location? This cannot be undone.')) return;
+
+    try {
+      setAppLoading(true);
+      const { error } = await supabase
+        .from('locations')
+        .update({ is_active: false })
+        .eq('id', locationId);
+      
+      if (error) throw error;
+      setLocations(locations.filter(l => l.id !== locationId));
+      if (selectedLocation?.id === locationId) {
+        setSelectedLocation(locations[0] || null);
+      }
+      alert('Location deleted!');
+    } catch (err) {
+      alert('Error: ' + err.message);
+    } finally {
+      setAppLoading(false);
+    }
+  };
+
+  // SECTION CRUD
   const createSection = async (e) => {
     e.preventDefault();
     if (!selectedLocation) {
@@ -293,11 +343,67 @@ export default function CBLemonsApp() {
       document.getElementById('section-desc').value = '';
       alert('Section created!');
     } catch (err) {
-      setError(err.message);
       alert('Error: ' + err.message);
     } finally {
       setAppLoading(false);
     }
+  };
+
+  const updateSection = async (sectionId, currentName, currentDesc) => {
+    const newName = prompt('Edit section name:', currentName);
+    if (!newName) return;
+
+    try {
+      setAppLoading(true);
+      const { error } = await supabase
+        .from('menu_sections')
+        .update({ name: newName, description: currentDesc })
+        .eq('id', sectionId);
+      
+      if (error) throw error;
+      setSections(sections.map(s => s.id === sectionId ? { ...s, name: newName } : s));
+      alert('Section updated!');
+    } catch (err) {
+      alert('Error: ' + err.message);
+    } finally {
+      setAppLoading(false);
+    }
+  };
+
+  const deleteSection = async (sectionId) => {
+    if (!window.confirm('Delete this section and all its dishes? This cannot be undone.')) return;
+
+    try {
+      setAppLoading(true);
+      const { error } = await supabase
+        .from('menu_sections')
+        .delete()
+        .eq('id', sectionId);
+      
+      if (error) throw error;
+      setSections(sections.filter(s => s.id !== sectionId));
+      await loadDishes(selectedLocation.id);
+      alert('Section deleted!');
+    } catch (err) {
+      alert('Error: ' + err.message);
+    } finally {
+      setAppLoading(false);
+    }
+  };
+
+  // DISH CRUD
+  const startEditDish = (dish) => {
+    setEditingDish(dish);
+    setFormData({
+      dishName: dish.name,
+      sectionId: dish.section_id,
+      description: dish.description_public || '',
+      ingredients: dish.ingredients || '',
+      prepNotes: dish.prep_notes || '',
+      creationNotes: dish.creation_notes || '',
+      environment: dish.environment,
+      selectedAllergens: dish.dish_allergens?.map(da => da.allergens.id) || []
+    });
   };
 
   const saveDish = async (e) => {
@@ -313,34 +419,80 @@ export default function CBLemonsApp() {
 
     try {
       setAppLoading(true);
-      const { data: dishData, error: dishError } = await supabase
-        .from('dishes')
-        .insert([{
-          section_id: formData.sectionId,
-          environment: formData.environment,
-          name: formData.dishName,
-          description_public: formData.description,
-          ingredients: formData.ingredients,
-          prep_notes: formData.prepNotes,
-          creation_notes: formData.creationNotes
-        }])
-        .select();
-      
-      if (dishError) throw dishError;
-      
-      const newDish = dishData[0];
 
-      if (formData.selectedAllergens.length > 0) {
-        const allergenRecords = formData.selectedAllergens.map(allergenId => ({
-          dish_id: newDish.id,
-          allergen_id: allergenId
-        }));
-
-        const { error: allergenError } = await supabase
-          .from('dish_allergens')
-          .insert(allergenRecords);
+      if (editingDish) {
+        // UPDATE
+        const { error: updateError } = await supabase
+          .from('dishes')
+          .update({
+            name: formData.dishName,
+            section_id: formData.sectionId,
+            description_public: formData.description,
+            ingredients: formData.ingredients,
+            prep_notes: formData.prepNotes,
+            creation_notes: formData.creationNotes,
+            environment: formData.environment
+          })
+          .eq('id', editingDish.id);
         
-        if (allergenError) throw allergenError;
+        if (updateError) throw updateError;
+
+        // Update allergens
+        const { error: deleteError } = await supabase
+          .from('dish_allergens')
+          .delete()
+          .eq('dish_id', editingDish.id);
+        
+        if (deleteError) throw deleteError;
+
+        if (formData.selectedAllergens.length > 0) {
+          const allergenRecords = formData.selectedAllergens.map(allergenId => ({
+            dish_id: editingDish.id,
+            allergen_id: allergenId
+          }));
+
+          const { error: insertError } = await supabase
+            .from('dish_allergens')
+            .insert(allergenRecords);
+          
+          if (insertError) throw insertError;
+        }
+
+        alert('Dish updated!');
+        setEditingDish(null);
+      } else {
+        // CREATE
+        const { data: dishData, error: dishError } = await supabase
+          .from('dishes')
+          .insert([{
+            section_id: formData.sectionId,
+            environment: formData.environment,
+            name: formData.dishName,
+            description_public: formData.description,
+            ingredients: formData.ingredients,
+            prep_notes: formData.prepNotes,
+            creation_notes: formData.creationNotes
+          }])
+          .select();
+        
+        if (dishError) throw dishError;
+        
+        const newDish = dishData[0];
+
+        if (formData.selectedAllergens.length > 0) {
+          const allergenRecords = formData.selectedAllergens.map(allergenId => ({
+            dish_id: newDish.id,
+            allergen_id: allergenId
+          }));
+
+          const { error: allergenError } = await supabase
+            .from('dish_allergens')
+            .insert(allergenRecords);
+          
+          if (allergenError) throw allergenError;
+        }
+
+        alert('Dish saved!');
       }
 
       await loadDishes(selectedLocation.id);
@@ -355,43 +507,27 @@ export default function CBLemonsApp() {
         environment: 'dev',
         selectedAllergens: []
       });
-      
-      alert('Dish saved!');
     } catch (err) {
-      setError(err.message);
       alert('Error: ' + err.message);
     } finally {
       setAppLoading(false);
     }
   };
 
-  const addAllergen = async (e) => {
-    e.preventDefault();
-    const allergenName = document.getElementById('allergen-name')?.value;
-    const allergenDesc = document.getElementById('allergen-desc')?.value;
-    
-    if (!allergenName) {
-      alert('Allergen name required');
-      return;
-    }
+  const deleteDish = async (dishId) => {
+    if (!window.confirm('Delete this dish? This cannot be undone.')) return;
 
     try {
       setAppLoading(true);
-      const { data, error } = await supabase
-        .from('allergens')
-        .insert([{
-          name: allergenName,
-          description: allergenDesc
-        }])
-        .select();
+      const { error } = await supabase
+        .from('dishes')
+        .delete()
+        .eq('id', dishId);
       
       if (error) throw error;
-      setAllergens([...allergens, data[0]]);
-      document.getElementById('allergen-name').value = '';
-      document.getElementById('allergen-desc').value = '';
-      alert('Allergen added!');
+      setDishes(dishes.filter(d => d.id !== dishId));
+      alert('Dish deleted!');
     } catch (err) {
-      setError(err.message);
       alert('Error: ' + err.message);
     } finally {
       setAppLoading(false);
@@ -535,21 +671,38 @@ export default function CBLemonsApp() {
             <h2 style={styles.sectionTitle}>Manage Locations</h2>
             <div style={styles.locationPills}>
               {locations.map(loc => (
-                <button
-                  key={loc.id}
-                  style={{
-                    ...styles.locationPill,
-                    ...(selectedLocation?.id === loc.id ? styles.locationPillActive : {})
-                  }}
-                  onClick={() => setSelectedLocation(loc)}
-                >
-                  {loc.name}
-                </button>
+                <div key={loc.id} style={styles.locationItemContainer}>
+                  <button
+                    style={{
+                      ...styles.locationPill,
+                      ...(selectedLocation?.id === loc.id ? styles.locationPillActive : {})
+                    }}
+                    onClick={() => setSelectedLocation(loc)}
+                  >
+                    {loc.name}
+                  </button>
+                  <div style={styles.locationActions}>
+                    <button
+                      style={styles.editButton}
+                      onClick={() => updateLocation(loc.id)}
+                      title="Edit"
+                    >
+                      ✏️
+                    </button>
+                    <button
+                      style={styles.deleteButton}
+                      onClick={() => deleteLocation(loc.id)}
+                      title="Delete"
+                    >
+                      🗑️
+                    </button>
+                  </div>
+                </div>
               ))}
-              <button style={styles.buttonPrimary} onClick={createLocation}>
-                + Add Location
-              </button>
             </div>
+            <button style={styles.buttonPrimary} onClick={createLocation}>
+              + Add Location
+            </button>
           </div>
         </div>
       )}
@@ -565,9 +718,27 @@ export default function CBLemonsApp() {
                 </p>
                 <div style={styles.sectionsList}>
                   {sections.map(section => (
-                    <div key={section.id} style={styles.card}>
-                      <h3>{section.name}</h3>
-                      <p>{section.description || 'No description'}</p>
+                    <div key={section.id} style={styles.cardWithActions}>
+                      <div style={styles.card}>
+                        <h3>{section.name}</h3>
+                        <p>{section.description || 'No description'}</p>
+                      </div>
+                      <div style={styles.cardActions}>
+                        <button
+                          style={styles.editButton}
+                          onClick={() => updateSection(section.id, section.name, section.description)}
+                          title="Edit"
+                        >
+                          ✏️
+                        </button>
+                        <button
+                          style={styles.deleteButton}
+                          onClick={() => deleteSection(section.id)}
+                          title="Delete"
+                        >
+                          🗑️
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -603,7 +774,7 @@ export default function CBLemonsApp() {
       {currentTab === 'dishes' && (
         <div style={styles.content}>
           <div style={styles.sectionBox}>
-            <h2 style={styles.sectionTitle}>Add Dish</h2>
+            <h2 style={styles.sectionTitle}>{editingDish ? 'Edit Dish' : 'Add Dish'}</h2>
             
             <div style={styles.formGroup}>
               <label>Dish Name</label>
@@ -704,22 +875,60 @@ export default function CBLemonsApp() {
 
             <div style={styles.buttonGroup}>
               <button style={styles.buttonPrimary} onClick={saveDish} disabled={appLoading}>
-                {appLoading ? 'Saving...' : 'Save Dish'}
+                {appLoading ? 'Saving...' : editingDish ? 'Update Dish' : 'Save Dish'}
               </button>
+              {editingDish && (
+                <button
+                  style={styles.buttonSecondary}
+                  onClick={() => {
+                    setEditingDish(null);
+                    setFormData({
+                      dishName: '',
+                      sectionId: '',
+                      description: '',
+                      ingredients: '',
+                      prepNotes: '',
+                      creationNotes: '',
+                      environment: 'dev',
+                      selectedAllergens: []
+                    });
+                  }}
+                >
+                  Cancel
+                </button>
+              )}
             </div>
           </div>
 
           <div style={styles.sectionBox}>
-            <h2 style={styles.sectionTitle}>Recent Dishes</h2>
+            <h2 style={styles.sectionTitle}>Dishes</h2>
             {dishes.length === 0 ? (
               <p>No dishes yet</p>
             ) : (
-              dishes.slice(0, 5).map(dish => (
-                <div key={dish.id} style={styles.card}>
-                  <h3>{dish.name}</h3>
-                  <p>{dish.description_public || 'No description'}</p>
-                  <div style={styles.dishMeta}>
-                    <span style={styles.badge}>{dish.environment}</span>
+              dishes.map(dish => (
+                <div key={dish.id} style={styles.cardWithActions}>
+                  <div style={styles.card}>
+                    <h3>{dish.name}</h3>
+                    <p>{dish.description_public || 'No description'}</p>
+                    <div style={styles.dishMeta}>
+                      <span style={styles.badge}>{dish.environment}</span>
+                    </div>
+                  </div>
+                  <div style={styles.cardActions}>
+                    <button
+                      style={styles.editButton}
+                      onClick={() => startEditDish(dish)}
+                      title="Edit"
+                    >
+                      ✏️
+                    </button>
+                    <button
+                      style={styles.deleteButton}
+                      onClick={() => deleteDish(dish.id)}
+                      title="Delete"
+                    >
+                      🗑️
+                    </button>
                   </div>
                 </div>
               ))
@@ -760,7 +969,37 @@ export default function CBLemonsApp() {
                 style={styles.textarea}
               />
             </div>
-            <button style={styles.buttonPrimary} onClick={addAllergen} disabled={appLoading}>
+            <button style={styles.buttonPrimary} onClick={async (e) => {
+              e.preventDefault();
+              const allergenName = document.getElementById('allergen-name')?.value;
+              const allergenDesc = document.getElementById('allergen-desc')?.value;
+              
+              if (!allergenName) {
+                alert('Allergen name required');
+                return;
+              }
+
+              try {
+                setAppLoading(true);
+                const { data, error } = await supabase
+                  .from('allergens')
+                  .insert([{
+                    name: allergenName,
+                    description: allergenDesc
+                  }])
+                  .select();
+                
+                if (error) throw error;
+                setAllergens([...allergens, data[0]]);
+                document.getElementById('allergen-name').value = '';
+                document.getElementById('allergen-desc').value = '';
+                alert('Allergen added!');
+              } catch (err) {
+                alert('Error: ' + err.message);
+              } finally {
+                setAppLoading(false);
+              }
+            }} disabled={appLoading}>
               {appLoading ? 'Adding...' : 'Add Allergen'}
             </button>
           </div>
@@ -883,9 +1122,6 @@ const styles = {
     paddingBottom: '1rem',
     borderBottom: '1px solid #ddd'
   },
-  headerLeft: {
-    flex: 1
-  },
   title: {
     fontSize: '28px',
     fontWeight: '600',
@@ -979,9 +1215,33 @@ const styles = {
     color: '#fff',
     transition: 'all 0.2s'
   },
+  buttonSecondary: {
+    padding: '0.75rem 1.5rem',
+    fontSize: '14px',
+    cursor: 'pointer',
+    border: '1px solid #ddd',
+    background: '#fff',
+    borderRadius: '4px',
+    color: '#000',
+    transition: 'all 0.2s'
+  },
   buttonGroup: {
     display: 'flex',
     gap: '0.75rem'
+  },
+  editButton: {
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    fontSize: '16px',
+    padding: '0.5rem'
+  },
+  deleteButton: {
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    fontSize: '16px',
+    padding: '0.5rem'
   },
   statsGrid: {
     display: 'grid',
@@ -1009,6 +1269,11 @@ const styles = {
     gap: '0.75rem',
     marginBottom: '1.5rem'
   },
+  locationItemContainer: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem'
+  },
   locationPill: {
     padding: '0.5rem 1rem',
     border: '1px solid #ddd',
@@ -1022,6 +1287,10 @@ const styles = {
     color: '#fff',
     borderColor: '#000'
   },
+  locationActions: {
+    display: 'flex',
+    gap: '0.25rem'
+  },
   selectedLocationText: {
     fontSize: '14px',
     color: '#666',
@@ -1030,12 +1299,24 @@ const styles = {
   sectionsList: {
     marginBottom: '2rem'
   },
+  cardWithActions: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: '1rem',
+    marginBottom: '1rem'
+  },
+  cardActions: {
+    display: 'flex',
+    gap: '0.5rem',
+    flexShrink: 0
+  },
   card: {
     background: '#f9f9f9',
     border: '0.5px solid #ddd',
     borderRadius: '8px',
     padding: '1rem',
-    marginBottom: '1rem'
+    flex: 1
   },
   allergenList: {
     display: 'flex',
