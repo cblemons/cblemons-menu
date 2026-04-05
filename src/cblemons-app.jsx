@@ -1,23 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
-// Initialize Supabase client
 const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
 const supabaseKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 export default function CBLemonsApp() {
-  // State
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [authError, setAuthError] = useState(null);
+  const [showSignup, setShowSignup] = useState(false);
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [approvedEmails, setApprovedEmails] = useState([]);
+
   const [currentTab, setCurrentTab] = useState('dashboard');
   const [locations, setLocations] = useState([]);
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [sections, setSections] = useState([]);
   const [dishes, setDishes] = useState([]);
   const [allergens, setAllergens] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [appLoading, setAppLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Form state
   const [formData, setFormData] = useState({
     dishName: '',
     sectionId: '',
@@ -29,25 +34,127 @@ export default function CBLemonsApp() {
     selectedAllergens: []
   });
 
-  // Load data on mount
   useEffect(() => {
-    loadLocations();
-    loadAllergens();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    checkUser();
+    loadApprovedEmails();
   }, []);
 
-  // Load sections when location changes
   useEffect(() => {
-    if (selectedLocation) {
+    if (user) {
+      loadLocations();
+      loadAllergens();
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (selectedLocation && user) {
       loadSections(selectedLocation.id);
       loadDishes(selectedLocation.id);
     }
-  }, [selectedLocation]);
+  }, [selectedLocation, user]);
 
-  // Fetch locations
+  const checkUser = async () => {
+    try {
+      const { data } = await supabase.auth.getSession();
+      setUser(data.session?.user || null);
+    } catch (err) {
+      console.error('Auth check failed:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadApprovedEmails = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('approved_emails')
+        .select('email');
+      
+      if (error) throw error;
+      setApprovedEmails(data?.map(d => d.email) || []);
+    } catch (err) {
+      console.error('Failed to load approved emails:', err);
+    }
+  };
+
+  const isEmailApproved = (email) => {
+    return approvedEmails.includes(email.toLowerCase());
+  };
+
+  const handleSignup = async (e) => {
+    e.preventDefault();
+    setAuthError(null);
+
+    if (!authEmail || !authPassword) {
+      setAuthError('Email and password required');
+      return;
+    }
+
+    if (!isEmailApproved(authEmail)) {
+      setAuthError('This email is not authorized. Please contact your administrator.');
+      return;
+    }
+
+    if (authPassword.length < 6) {
+      setAuthError('Password must be at least 6 characters');
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: authEmail,
+        password: authPassword
+      });
+
+      if (error) throw error;
+      
+      setAuthEmail('');
+      setAuthPassword('');
+      setShowSignup(false);
+      setAuthError('Account created! Please check your email to confirm.');
+    } catch (err) {
+      setAuthError(err.message);
+    }
+  };
+
+  const handleSignin = async (e) => {
+    e.preventDefault();
+    setAuthError(null);
+
+    if (!authEmail || !authPassword) {
+      setAuthError('Email and password required');
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: authEmail,
+        password: authPassword
+      });
+
+      if (error) throw error;
+      
+      setUser(data.user);
+      setAuthEmail('');
+      setAuthPassword('');
+    } catch (err) {
+      setAuthError('Invalid email or password');
+    }
+  };
+
+  const handleSignout = async () => {
+    try {
+      await supabase.auth.signOut();
+      setUser(null);
+      setCurrentTab('dashboard');
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   const loadLocations = async () => {
     try {
-      setLoading(true);
+      setAppLoading(true);
       const { data, error } = await supabase
         .from('locations')
         .select('*')
@@ -61,11 +168,10 @@ export default function CBLemonsApp() {
     } catch (err) {
       setError(err.message);
     } finally {
-      setLoading(false);
+      setAppLoading(false);
     }
   };
 
-  // Fetch sections
   const loadSections = async (locationId) => {
     try {
       const { data, error } = await supabase
@@ -81,7 +187,6 @@ export default function CBLemonsApp() {
     }
   };
 
-  // Fetch dishes
   const loadDishes = async (locationId) => {
     try {
       const { data: sectionData, error: sectionError } = await supabase
@@ -116,7 +221,6 @@ export default function CBLemonsApp() {
     }
   };
 
-  // Fetch allergens
   const loadAllergens = async () => {
     try {
       const { data, error } = await supabase
@@ -131,14 +235,13 @@ export default function CBLemonsApp() {
     }
   };
 
-  // Create location
   const createLocation = async (e) => {
     e.preventDefault();
     const name = prompt('Enter location name (e.g., CB Lemons Seaside):');
     if (!name) return;
 
     try {
-      setLoading(true);
+      setAppLoading(true);
       const { data, error } = await supabase
         .from('locations')
         .insert([{ name, concept_type: 'TBD', description: '' }])
@@ -150,13 +253,12 @@ export default function CBLemonsApp() {
       alert('Location created!');
     } catch (err) {
       setError(err.message);
-      alert('Error creating location: ' + err.message);
+      alert('Error: ' + err.message);
     } finally {
-      setLoading(false);
+      setAppLoading(false);
     }
   };
 
-  // Create section
   const createSection = async (e) => {
     e.preventDefault();
     if (!selectedLocation) {
@@ -173,7 +275,7 @@ export default function CBLemonsApp() {
     }
 
     try {
-      setLoading(true);
+      setAppLoading(true);
       const { data, error } = await supabase
         .from('menu_sections')
         .insert([{
@@ -191,13 +293,12 @@ export default function CBLemonsApp() {
       alert('Section created!');
     } catch (err) {
       setError(err.message);
-      alert('Error creating section: ' + err.message);
+      alert('Error: ' + err.message);
     } finally {
-      setLoading(false);
+      setAppLoading(false);
     }
   };
 
-  // Save dish
   const saveDish = async (e) => {
     e.preventDefault();
     if (!formData.sectionId) {
@@ -210,7 +311,7 @@ export default function CBLemonsApp() {
     }
 
     try {
-      setLoading(true);
+      setAppLoading(true);
       const { data: dishData, error: dishError } = await supabase
         .from('dishes')
         .insert([{
@@ -228,7 +329,6 @@ export default function CBLemonsApp() {
       
       const newDish = dishData[0];
 
-      // Add allergens
       if (formData.selectedAllergens.length > 0) {
         const allergenRecords = formData.selectedAllergens.map(allergenId => ({
           dish_id: newDish.id,
@@ -242,10 +342,8 @@ export default function CBLemonsApp() {
         if (allergenError) throw allergenError;
       }
 
-      // Reload dishes
       await loadDishes(selectedLocation.id);
       
-      // Reset form
       setFormData({
         dishName: '',
         sectionId: '',
@@ -260,13 +358,12 @@ export default function CBLemonsApp() {
       alert('Dish saved!');
     } catch (err) {
       setError(err.message);
-      alert('Error saving dish: ' + err.message);
+      alert('Error: ' + err.message);
     } finally {
-      setLoading(false);
+      setAppLoading(false);
     }
   };
 
-  // Add allergen
   const addAllergen = async (e) => {
     e.preventDefault();
     const allergenName = document.getElementById('allergen-name')?.value;
@@ -278,7 +375,7 @@ export default function CBLemonsApp() {
     }
 
     try {
-      setLoading(true);
+      setAppLoading(true);
       const { data, error } = await supabase
         .from('allergens')
         .insert([{
@@ -294,9 +391,9 @@ export default function CBLemonsApp() {
       alert('Allergen added!');
     } catch (err) {
       setError(err.message);
-      alert('Error adding allergen: ' + err.message);
+      alert('Error: ' + err.message);
     } finally {
-      setLoading(false);
+      setAppLoading(false);
     }
   };
 
@@ -309,15 +406,88 @@ export default function CBLemonsApp() {
     }));
   };
 
-  // Dashboard stats
   const devDishCount = dishes.filter(d => d.environment === 'dev').length;
   const prodDishCount = dishes.filter(d => d.environment === 'production').length;
+
+  if (loading) {
+    return <div style={styles.container}><p>Loading...</p></div>;
+  }
+
+  if (!user) {
+    return (
+      <div style={styles.container}>
+        <div style={styles.authContainer}>
+          <h1 style={styles.authTitle}>CB Lemons Menu Manager</h1>
+          <p style={styles.authSubtitle}>Sign in to access</p>
+
+          {authError && <div style={styles.authError}>{authError}</div>}
+
+          <div style={styles.authCard}>
+            <h2 style={styles.authCardTitle}>
+              {showSignup ? 'Create Account' : 'Sign In'}
+            </h2>
+
+            <div style={styles.formGroup}>
+              <label>Email</label>
+              <input
+                type="email"
+                placeholder="your@email.com"
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && (showSignup ? handleSignup(e) : handleSignin(e))}
+                style={styles.input}
+              />
+            </div>
+
+            <div style={styles.formGroup}>
+              <label>Password</label>
+              <input
+                type="password"
+                placeholder="••••••••"
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && (showSignup ? handleSignup(e) : handleSignin(e))}
+                style={styles.input}
+              />
+            </div>
+
+            <button
+              style={styles.buttonPrimary}
+              onClick={showSignup ? handleSignup : handleSignin}
+            >
+              {showSignup ? 'Create Account' : 'Sign In'}
+            </button>
+
+            <p style={styles.authToggle}>
+              {showSignup ? 'Already have an account? ' : 'Need an account? '}
+              <a
+                href="#"
+                onClick={(e) => {
+                  e.preventDefault();
+                  setShowSignup(!showSignup);
+                  setAuthError('');
+                }}
+                style={styles.authLink}
+              >
+                {showSignup ? 'Sign In' : 'Sign Up'}
+              </a>
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={styles.container}>
       <div style={styles.header}>
-        <h1 style={styles.title}>CB Lemons Menu Manager</h1>
-        <p style={styles.subtitle}>Develop, test, and launch menus across locations and environments</p>
+        <div>
+          <h1 style={styles.title}>CB Lemons Menu Manager</h1>
+          <p style={styles.subtitle}>Logged in as: {user.email}</p>
+        </div>
+        <button style={styles.signoutButton} onClick={handleSignout}>
+          Sign Out
+        </button>
       </div>
 
       {error && <div style={styles.error}>{error}</div>}
@@ -337,7 +507,6 @@ export default function CBLemonsApp() {
         ))}
       </div>
 
-      {/* DASHBOARD */}
       {currentTab === 'dashboard' && (
         <div style={styles.content}>
           <div style={styles.statsGrid}>
@@ -361,7 +530,6 @@ export default function CBLemonsApp() {
         </div>
       )}
 
-      {/* LOCATIONS */}
       {currentTab === 'locations' && (
         <div style={styles.content}>
           <div style={styles.sectionBox}>
@@ -383,17 +551,10 @@ export default function CBLemonsApp() {
                 + Add Location
               </button>
             </div>
-            {selectedLocation && (
-              <div style={styles.selectedLocationInfo}>
-                <h3>{selectedLocation.name}</h3>
-                <p>Active location for editing</p>
-              </div>
-            )}
           </div>
         </div>
       )}
 
-      {/* MENUS */}
       {currentTab === 'menus' && (
         <div style={styles.content}>
           <div style={styles.sectionBox}>
@@ -401,7 +562,7 @@ export default function CBLemonsApp() {
             {selectedLocation ? (
               <>
                 <p style={styles.selectedLocationText}>
-                  <strong>Selected location:</strong> {selectedLocation.name}
+                  <strong>Location:</strong> {selectedLocation.name}
                 </p>
                 <div style={styles.sectionsList}>
                   {sections.map(section => (
@@ -425,7 +586,7 @@ export default function CBLemonsApp() {
                   <label>Description</label>
                   <textarea
                     id="section-desc"
-                    placeholder="Brief description of this section..."
+                    placeholder="Brief description..."
                     style={styles.textarea}
                   />
                 </div>
@@ -440,7 +601,6 @@ export default function CBLemonsApp() {
         </div>
       )}
 
-      {/* DISHES */}
       {currentTab === 'dishes' && (
         <div style={styles.content}>
           <div style={styles.sectionBox}>
@@ -474,9 +634,9 @@ export default function CBLemonsApp() {
             </div>
 
             <div style={styles.formGroup}>
-              <label>Description (Customer-facing)</label>
+              <label>Description</label>
               <textarea
-                placeholder="What makes this dish special?"
+                placeholder="What makes this special?"
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 style={styles.textarea}
@@ -510,9 +670,9 @@ export default function CBLemonsApp() {
             </div>
 
             <div style={styles.formGroup}>
-              <label>Prep Notes (Dev only)</label>
+              <label>Prep Notes (Dev Only)</label>
               <textarea
-                placeholder="Internal notes on preparation, sourcing, etc."
+                placeholder="Internal preparation notes..."
                 value={formData.prepNotes}
                 onChange={(e) => setFormData({ ...formData, prepNotes: e.target.value })}
                 style={styles.textarea}
@@ -520,9 +680,9 @@ export default function CBLemonsApp() {
             </div>
 
             <div style={styles.formGroup}>
-              <label>Creation Notes (Dev only)</label>
+              <label>Creation Notes (Dev Only)</label>
               <textarea
-                placeholder="Inspiration, iteration history, team notes..."
+                placeholder="Inspiration, iteration history..."
                 value={formData.creationNotes}
                 onChange={(e) => setFormData({ ...formData, creationNotes: e.target.value })}
                 style={styles.textarea}
@@ -544,8 +704,8 @@ export default function CBLemonsApp() {
             </div>
 
             <div style={styles.buttonGroup}>
-              <button style={styles.buttonPrimary} onClick={saveDish} disabled={loading}>
-                {loading ? 'Saving...' : 'Save Dish'}
+              <button style={styles.buttonPrimary} onClick={saveDish} disabled={appLoading}>
+                {appLoading ? 'Saving...' : 'Save Dish'}
               </button>
             </div>
           </div>
@@ -569,14 +729,10 @@ export default function CBLemonsApp() {
         </div>
       )}
 
-      {/* ALLERGENS */}
       {currentTab === 'allergens' && (
         <div style={styles.content}>
           <div style={styles.sectionBox}>
             <h2 style={styles.sectionTitle}>Master Allergen List</h2>
-            <p style={styles.allergenDesc}>
-              Define allergens globally. Tag dishes with these to auto-generate strict disclosure warnings.
-            </p>
             
             <div style={styles.allergenGrid}>
               {allergens.map(allergen => (
@@ -601,30 +757,26 @@ export default function CBLemonsApp() {
               <label>Description</label>
               <textarea
                 id="allergen-desc"
-                placeholder="E.g., Common in tahini, hummus, Asian dressings..."
+                placeholder="Common uses..."
                 style={styles.textarea}
               />
             </div>
-            <button style={styles.buttonPrimary} onClick={addAllergen} disabled={loading}>
-              {loading ? 'Adding...' : 'Add Allergen'}
+            <button style={styles.buttonPrimary} onClick={addAllergen} disabled={appLoading}>
+              {appLoading ? 'Adding...' : 'Add Allergen'}
             </button>
           </div>
         </div>
       )}
 
-      {/* PREVIEW */}
       {currentTab === 'preview' && (
         <div style={styles.content}>
           <div style={styles.sectionBox}>
             <h2 style={styles.sectionTitle}>Public Menu Preview</h2>
-            <p style={styles.previewDesc}>
-              This is what customers see. Prep notes and internal metadata are hidden.
-            </p>
+            <p style={styles.previewDesc}>This is what customers see.</p>
             
             {selectedLocation && (
               <div style={styles.previewContainer}>
                 <h1 style={styles.previewTitle}>{selectedLocation.name}</h1>
-                <p style={styles.previewSubtitle}>{selectedLocation.description}</p>
                 
                 {sections.map(section => (
                   <div key={section.id} style={styles.previewSection}>
@@ -657,7 +809,6 @@ export default function CBLemonsApp() {
   );
 }
 
-// Styles
 const styles = {
   container: {
     maxWidth: '1200px',
@@ -667,8 +818,70 @@ const styles = {
     backgroundColor: '#f9f9f9',
     minHeight: '100vh'
   },
+  authContainer: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: '100vh',
+    padding: '1rem'
+  },
+  authTitle: {
+    fontSize: '32px',
+    fontWeight: '600',
+    marginBottom: '0.5rem',
+    textAlign: 'center'
+  },
+  authSubtitle: {
+    fontSize: '16px',
+    color: '#666',
+    marginBottom: '2rem',
+    textAlign: 'center'
+  },
+  authCard: {
+    background: '#fff',
+    border: '1px solid #ddd',
+    borderRadius: '8px',
+    padding: '2rem',
+    width: '100%',
+    maxWidth: '400px'
+  },
+  authCardTitle: {
+    fontSize: '20px',
+    fontWeight: '600',
+    marginBottom: '1.5rem',
+    textAlign: 'center'
+  },
+  authError: {
+    background: '#fee',
+    color: '#c33',
+    padding: '0.75rem',
+    borderRadius: '4px',
+    marginBottom: '1rem',
+    fontSize: '14px'
+  },
+  authToggle: {
+    textAlign: 'center',
+    marginTop: '1rem',
+    fontSize: '14px',
+    color: '#666'
+  },
+  authLink: {
+    color: '#0066cc',
+    textDecoration: 'none',
+    fontWeight: '600',
+    cursor: 'pointer'
+  },
   header: {
-    marginBottom: '2rem'
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '2rem',
+    paddingBottom: '1rem',
+    borderBottom: '1px solid #ddd'
+  },
+  headerLeft: {
+    flex: 1
   },
   title: {
     fontSize: '28px',
@@ -679,6 +892,15 @@ const styles = {
     fontSize: '14px',
     color: '#666',
     margin: '0'
+  },
+  signoutButton: {
+    padding: '0.5rem 1rem',
+    fontSize: '14px',
+    background: '#c33',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer'
   },
   tabs: {
     display: 'flex',
@@ -744,16 +966,6 @@ const styles = {
     resize: 'vertical',
     boxSizing: 'border-box'
   },
-  button: {
-    padding: '0.75rem 1.5rem',
-    fontSize: '14px',
-    cursor: 'pointer',
-    border: '1px solid #ddd',
-    background: '#fff',
-    borderRadius: '4px',
-    color: '#000',
-    transition: 'all 0.2s'
-  },
   buttonPrimary: {
     padding: '0.75rem 1.5rem',
     fontSize: '14px',
@@ -807,12 +1019,6 @@ const styles = {
     color: '#fff',
     borderColor: '#000'
   },
-  selectedLocationInfo: {
-    background: '#f0f0f0',
-    padding: '1.5rem',
-    borderRadius: '8px',
-    marginTop: '1rem'
-  },
   selectedLocationText: {
     fontSize: '14px',
     color: '#666',
@@ -839,11 +1045,6 @@ const styles = {
     gap: '0.5rem',
     fontSize: '14px',
     cursor: 'pointer'
-  },
-  allergenDesc: {
-    fontSize: '14px',
-    color: '#666',
-    marginBottom: '1.5rem'
   },
   allergenGrid: {
     display: 'grid',
@@ -898,12 +1099,7 @@ const styles = {
   previewTitle: {
     fontSize: '28px',
     fontWeight: '600',
-    marginBottom: '0.5rem',
-    margin: '0 0 0.5rem'
-  },
-  previewSubtitle: {
-    color: '#666',
-    marginBottom: '2rem'
+    margin: '0 0 2rem'
   },
   previewSection: {
     marginTop: '2rem',
