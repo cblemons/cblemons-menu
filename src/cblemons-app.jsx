@@ -24,8 +24,6 @@ export default function CBLemonsApp() {
   const [error, setError] = useState(null);
 
   // Edit mode state
-  const [editingLocation, setEditingLocation] = useState(null);
-  const [editingSection, setEditingSection] = useState(null);
   const [editingDish, setEditingDish] = useState(null);
 
   const [formData, setFormData] = useState({
@@ -49,6 +47,7 @@ export default function CBLemonsApp() {
       loadLocations();
       loadAllergens();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   useEffect(() => {
