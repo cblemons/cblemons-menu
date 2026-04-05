@@ -44,6 +44,7 @@ export default function CBLemonsApp() {
       loadLocations();
       loadAllergens();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   useEffect(() => {
@@ -101,7 +102,7 @@ export default function CBLemonsApp() {
     }
 
     try {
-      const { data, error } = await supabase.auth.signUp({
+      const { error } = await supabase.auth.signUp({
         email: authEmail,
         password: authPassword
       });
@@ -460,17 +461,15 @@ export default function CBLemonsApp() {
 
             <p style={styles.authToggle}>
               {showSignup ? 'Already have an account? ' : 'Need an account? '}
-              <a
-                href="#"
-                onClick={(e) => {
-                  e.preventDefault();
+              <button
+                onClick={() => {
                   setShowSignup(!showSignup);
                   setAuthError('');
                 }}
                 style={styles.authLink}
               >
                 {showSignup ? 'Sign In' : 'Sign Up'}
-              </a>
+              </button>
             </p>
           </div>
         </div>
@@ -870,7 +869,11 @@ const styles = {
     color: '#0066cc',
     textDecoration: 'none',
     fontWeight: '600',
-    cursor: 'pointer'
+    cursor: 'pointer',
+    background: 'none',
+    border: 'none',
+    padding: '0',
+    font: 'inherit'
   },
   header: {
     display: 'flex',
