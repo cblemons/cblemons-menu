@@ -23,8 +23,8 @@ export default function CBLemonsApp() {
   const [appLoading, setAppLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Edit mode state
   const [editingDish, setEditingDish] = useState(null);
+  const [dishImages, setDishImages] = useState([]);
 
   const [formData, setFormData] = useState({
     dishName: '',
@@ -37,6 +37,13 @@ export default function CBLemonsApp() {
     selectedAllergens: []
   });
 
+  const [photoData, setPhotoData] = useState({
+    heroImage: null,
+    heroFile: null,
+    processPhotos: [],
+    processFiles: []
+  });
+
   useEffect(() => {
     checkUser();
     loadApprovedEmails();
@@ -47,7 +54,6 @@ export default function CBLemonsApp() {
       loadLocations();
       loadAllergens();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   useEffect(() => {
@@ -213,7 +219,8 @@ export default function CBLemonsApp() {
           menu_sections(name),
           dish_allergens(
             allergens(id, name, description)
-          )
+          ),
+          dish_images(*)
         `)
         .in('section_id', sectionIds)
         .order('created_at', { ascending: false });
@@ -236,6 +243,160 @@ export default function CBLemonsApp() {
       setAllergens(data || []);
     } catch (err) {
       setError(err.message);
+    }
+  };
+
+  const loadDishImages = async (dishId) => {
+    try {
+      const { data, error } = await supabase
+        .from('dish_images')
+        .select('*')
+        .eq('dish_id', dishId)
+        .order('display_order', { ascending: true });
+      
+      if (error) throw error;
+      setDishImages(data || []);
+    } catch (err) {
+      console.error('Error loading images:', err);
+    }
+  };
+
+  // PHOTO UPLOAD
+  const handleHeroImageChange = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setPhotoData({
+          ...photoData,
+          heroFile: file,
+          heroImage: event.target.result
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleProcessPhotoChange = (e) => {
+    const files = e.target.files;
+    if (files) {
+      const newPhotos = [];
+      const newFiles = [];
+      
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          newPhotos.push({
+            preview: event.target.result,
+            caption: ''
+          });
+          newFiles.push(file);
+          
+          if (newPhotos.length === files.length) {
+            setPhotoData({
+              ...photoData,
+              processPhotos: [...photoData.processPhotos, ...newPhotos],
+              processFiles: [...photoData.processFiles, ...newFiles]
+            });
+          }
+        };
+        reader.readAsDataURL(file);
+      }
+    }
+  };
+
+  const removeProcessPhoto = (index) => {
+    setPhotoData({
+      ...photoData,
+      processPhotos: photoData.processPhotos.filter((_, i) => i !== index),
+      processFiles: photoData.processFiles.filter((_, i) => i !== index)
+    });
+  };
+
+  const uploadPhotos = async (dishId) => {
+    try {
+      // Upload hero image
+      if (photoData.heroFile) {
+        const heroFileName = `${dishId}-hero-${Date.now()}`;
+        const { error: uploadError } = await supabase.storage
+          .from('dish-images')
+          .upload(heroFileName, photoData.heroFile);
+        
+        if (uploadError) throw uploadError;
+
+        const { data: { publicUrl } } = supabase.storage
+          .from('dish-images')
+          .getPublicUrl(heroFileName);
+
+        // Delete old hero image if exists
+        const existingHero = dishImages.find(img => img.image_type === 'hero');
+        if (existingHero) {
+          await supabase.from('dish_images').delete().eq('id', existingHero.id);
+        }
+
+        // Add new hero image record
+        await supabase.from('dish_images').insert([{
+          dish_id: dishId,
+          image_type: 'hero',
+          image_url: publicUrl
+        }]);
+      }
+
+      // Upload process photos
+      for (let i = 0; i < photoData.processFiles.length; i++) {
+        const file = photoData.processFiles[i];
+        const caption = photoData.processPhotos[i].caption;
+        const processFileName = `${dishId}-process-${i}-${Date.now()}`;
+        
+        const { error: uploadError } = await supabase.storage
+          .from('dish-images')
+          .upload(processFileName, file);
+        
+        if (uploadError) throw uploadError;
+
+        const { data: { publicUrl } } = supabase.storage
+          .from('dish-images')
+          .getPublicUrl(processFileName);
+
+        await supabase.from('dish_images').insert([{
+          dish_id: dishId,
+          image_type: 'process',
+          image_url: publicUrl,
+          caption: caption,
+          display_order: i
+        }]);
+      }
+
+      alert('Photos uploaded successfully!');
+      setPhotoData({
+        heroImage: null,
+        heroFile: null,
+        processPhotos: [],
+        processFiles: []
+      });
+
+      await loadDishes(selectedLocation.id);
+    } catch (err) {
+      alert('Error uploading photos: ' + err.message);
+    }
+  };
+
+  const deleteImage = async (imageId, dishId) => {
+    if (!window.confirm('Delete this image?')) return;
+
+    try {
+      const { error } = await supabase
+        .from('dish_images')
+        .delete()
+        .eq('id', imageId);
+      
+      if (error) throw error;
+      await loadDishImages(dishId);
+      await loadDishes(selectedLocation.id);
+      alert('Image deleted!');
+    } catch (err) {
+      alert('Error: ' + err.message);
     }
   };
 
@@ -403,6 +564,7 @@ export default function CBLemonsApp() {
       environment: dish.environment,
       selectedAllergens: dish.dish_allergens?.map(da => da.allergens.id) || []
     });
+    loadDishImages(dish.id);
   };
 
   const saveDish = async (e) => {
@@ -436,7 +598,6 @@ export default function CBLemonsApp() {
         
         if (updateError) throw updateError;
 
-        // Update allergens
         const { error: deleteError } = await supabase
           .from('dish_allergens')
           .delete()
@@ -455,6 +616,11 @@ export default function CBLemonsApp() {
             .insert(allergenRecords);
           
           if (insertError) throw insertError;
+        }
+
+        // Upload photos if any
+        if (photoData.heroFile || photoData.processFiles.length > 0) {
+          await uploadPhotos(editingDish.id);
         }
 
         alert('Dish updated!');
@@ -491,6 +657,11 @@ export default function CBLemonsApp() {
           if (allergenError) throw allergenError;
         }
 
+        // Upload photos if any
+        if (photoData.heroFile || photoData.processFiles.length > 0) {
+          await uploadPhotos(newDish.id);
+        }
+
         alert('Dish saved!');
       }
 
@@ -505,6 +676,12 @@ export default function CBLemonsApp() {
         creationNotes: '',
         environment: 'dev',
         selectedAllergens: []
+      });
+      setPhotoData({
+        heroImage: null,
+        heroFile: null,
+        processPhotos: [],
+        processFiles: []
       });
     } catch (err) {
       alert('Error: ' + err.message);
@@ -872,6 +1049,79 @@ export default function CBLemonsApp() {
               </select>
             </div>
 
+            <h3 style={styles.sectionSubtitle}>📸 Photos</h3>
+            
+            <div style={styles.formGroup}>
+              <label>Hero Image (Main Dish Photo)</label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleHeroImageChange}
+                style={styles.input}
+              />
+              {photoData.heroImage && (
+                <div style={styles.photoPreview}>
+                  <img src={photoData.heroImage} alt="Hero preview" style={styles.previewImg} />
+                </div>
+              )}
+            </div>
+
+            <div style={styles.formGroup}>
+              <label>Process Photos (Step-by-Step)</label>
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={handleProcessPhotoChange}
+                style={styles.input}
+              />
+              <div style={styles.processPhotosContainer}>
+                {photoData.processPhotos.map((photo, idx) => (
+                  <div key={idx} style={styles.processPhotoItem}>
+                    <img src={photo.preview} alt={`Process step ${idx + 1}`} style={styles.previewImgSmall} />
+                    <input
+                      type="text"
+                      placeholder={`Step ${idx + 1} caption...`}
+                      value={photo.caption}
+                      onChange={(e) => {
+                        const updated = [...photoData.processPhotos];
+                        updated[idx].caption = e.target.value;
+                        setPhotoData({ ...photoData, processPhotos: updated });
+                      }}
+                      style={styles.input}
+                    />
+                    <button
+                      type="button"
+                      style={styles.deleteButton}
+                      onClick={() => removeProcessPhoto(idx)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {editingDish && dishImages.length > 0 && (
+              <div style={styles.formGroup}>
+                <h4>Current Photos</h4>
+                {dishImages.map((img) => (
+                  <div key={img.id} style={styles.currentPhotoItem}>
+                    <img src={img.image_url} alt={img.image_type} style={styles.currentPhotoImg} />
+                    <div style={styles.currentPhotoInfo}>
+                      <p>{img.image_type === 'hero' ? 'Hero Image' : `Process: ${img.caption}`}</p>
+                      <button
+                        style={styles.deleteButton}
+                        onClick={() => deleteImage(img.id, editingDish.id)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div style={styles.buttonGroup}>
               <button style={styles.buttonPrimary} onClick={saveDish} disabled={appLoading}>
                 {appLoading ? 'Saving...' : editingDish ? 'Update Dish' : 'Save Dish'}
@@ -891,6 +1141,13 @@ export default function CBLemonsApp() {
                       environment: 'dev',
                       selectedAllergens: []
                     });
+                    setPhotoData({
+                      heroImage: null,
+                      heroFile: null,
+                      processPhotos: [],
+                      processFiles: []
+                    });
+                    setDishImages([]);
                   }}
                 >
                   Cancel
@@ -905,30 +1162,43 @@ export default function CBLemonsApp() {
               <p>No dishes yet</p>
             ) : (
               dishes.map(dish => (
-                <div key={dish.id} style={styles.cardWithActions}>
-                  <div style={styles.card}>
-                    <h3>{dish.name}</h3>
-                    <p>{dish.description_public || 'No description'}</p>
-                    <div style={styles.dishMeta}>
-                      <span style={styles.badge}>{dish.environment}</span>
+                <div key={dish.id} style={styles.dishCardWithImages}>
+                  <div style={styles.dishCardContent}>
+                    <div style={styles.card}>
+                      <h3>{dish.name}</h3>
+                      <p>{dish.description_public || 'No description'}</p>
+                      <div style={styles.dishMeta}>
+                        <span style={styles.badge}>{dish.environment}</span>
+                      </div>
+                    </div>
+                    <div style={styles.cardActions}>
+                      <button
+                        style={styles.editButton}
+                        onClick={() => startEditDish(dish)}
+                        title="Edit"
+                      >
+                        ✏️
+                      </button>
+                      <button
+                        style={styles.deleteButton}
+                        onClick={() => deleteDish(dish.id)}
+                        title="Delete"
+                      >
+                        🗑️
+                      </button>
                     </div>
                   </div>
-                  <div style={styles.cardActions}>
-                    <button
-                      style={styles.editButton}
-                      onClick={() => startEditDish(dish)}
-                      title="Edit"
-                    >
-                      ✏️
-                    </button>
-                    <button
-                      style={styles.deleteButton}
-                      onClick={() => deleteDish(dish.id)}
-                      title="Delete"
-                    >
-                      🗑️
-                    </button>
-                  </div>
+                  {dish.dish_images && dish.dish_images.length > 0 && (
+                    <div style={styles.dishImagesPreview}>
+                      {dish.dish_images.filter(img => img.image_type === 'hero')[0] && (
+                        <img
+                          src={dish.dish_images.filter(img => img.image_type === 'hero')[0].image_url}
+                          alt="Hero"
+                          style={styles.dishImageThumbnail}
+                        />
+                      )}
+                    </div>
+                  )}
                 </div>
               ))
             )}
@@ -1023,6 +1293,13 @@ export default function CBLemonsApp() {
                       .map(dish => (
                         <div key={dish.id} style={styles.previewDish}>
                           <h3>{dish.name}</h3>
+                          {dish.dish_images && dish.dish_images.filter(img => img.image_type === 'hero')[0] && (
+                            <img
+                              src={dish.dish_images.filter(img => img.image_type === 'hero')[0].image_url}
+                              alt={dish.name}
+                              style={styles.previewDishImage}
+                            />
+                          )}
                           <p>{dish.description_public}</p>
                           {dish.dish_allergens && dish.dish_allergens.length > 0 && (
                             <div style={styles.previewAllergens}>
@@ -1239,8 +1516,9 @@ const styles = {
     background: 'none',
     border: 'none',
     cursor: 'pointer',
-    fontSize: '16px',
-    padding: '0.5rem'
+    fontSize: '14px',
+    padding: '0.5rem',
+    color: '#c33'
   },
   statsGrid: {
     display: 'grid',
@@ -1315,6 +1593,73 @@ const styles = {
     border: '0.5px solid #ddd',
     borderRadius: '8px',
     padding: '1rem',
+    flex: 1
+  },
+  dishCardWithImages: {
+    background: '#f9f9f9',
+    border: '0.5px solid #ddd',
+    borderRadius: '8px',
+    padding: '1rem',
+    marginBottom: '1rem',
+    display: 'flex',
+    gap: '1rem'
+  },
+  dishCardContent: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    flex: 1,
+    gap: '1rem'
+  },
+  dishImagesPreview: {
+    flexShrink: 0,
+    maxWidth: '150px'
+  },
+  dishImageThumbnail: {
+    width: '150px',
+    height: '150px',
+    objectFit: 'cover',
+    borderRadius: '4px'
+  },
+  photoPreview: {
+    marginTop: '1rem',
+    maxWidth: '200px'
+  },
+  previewImg: {
+    width: '100%',
+    borderRadius: '4px'
+  },
+  previewImgSmall: {
+    width: '100px',
+    height: '100px',
+    objectFit: 'cover',
+    borderRadius: '4px'
+  },
+  processPhotosContainer: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '1rem',
+    marginTop: '1rem'
+  },
+  processPhotoItem: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.5rem',
+    minWidth: '120px'
+  },
+  currentPhotoItem: {
+    display: 'flex',
+    gap: '1rem',
+    marginBottom: '1rem',
+    alignItems: 'center'
+  },
+  currentPhotoImg: {
+    width: '100px',
+    height: '100px',
+    objectFit: 'cover',
+    borderRadius: '4px'
+  },
+  currentPhotoInfo: {
     flex: 1
   },
   allergenList: {
@@ -1399,6 +1744,13 @@ const styles = {
     borderRadius: '8px',
     marginBottom: '1.5rem',
     border: '1px solid #ddd'
+  },
+  previewDishImage: {
+    width: '100%',
+    maxWidth: '400px',
+    height: 'auto',
+    borderRadius: '4px',
+    marginBottom: '1rem'
   },
   previewAllergens: {
     display: 'flex',
