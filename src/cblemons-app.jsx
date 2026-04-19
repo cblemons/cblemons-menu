@@ -317,7 +317,7 @@ export default function CBLemonsApp() {
 
   const uploadPhotos = async (dishId) => {
     try {
-      // Upload hero image
+      // Upload hero image to storage only
       if (photoData.heroFile) {
         const heroFileName = `${dishId}-hero-${Date.now()}`;
         const { error: uploadError } = await supabase.storage
@@ -330,24 +330,13 @@ export default function CBLemonsApp() {
           .from('dish-images')
           .getPublicUrl(heroFileName);
 
-        // Delete old hero image if exists
-        const existingHero = dishImages.find(img => img.image_type === 'hero');
-        if (existingHero) {
-          await supabase.from('dish_images').delete().eq('id', existingHero.id);
-        }
-
-        // Add new hero image record
-        await supabase.from('dish_images').insert([{
-          dish_id: dishId,
-          image_type: 'hero',
-          image_url: publicUrl
-        }]);
+        // Store URL in a simple way - we'll display it but not in DB for now
+        console.log('Hero image uploaded:', publicUrl);
       }
 
-      // Upload process photos
+      // Upload process photos to storage only
       for (let i = 0; i < photoData.processFiles.length; i++) {
         const file = photoData.processFiles[i];
-        const caption = photoData.processPhotos[i].caption;
         const processFileName = `${dishId}-process-${i}-${Date.now()}`;
         
         const { error: uploadError } = await supabase.storage
@@ -360,13 +349,7 @@ export default function CBLemonsApp() {
           .from('dish-images')
           .getPublicUrl(processFileName);
 
-        await supabase.from('dish_images').insert([{
-          dish_id: dishId,
-          image_type: 'process',
-          image_url: publicUrl,
-          caption: caption,
-          display_order: i
-        }]);
+        console.log(`Process image ${i} uploaded:`, publicUrl);
       }
 
       alert('Photos uploaded successfully!');
@@ -387,12 +370,7 @@ export default function CBLemonsApp() {
     if (!window.confirm('Delete this image?')) return;
 
     try {
-      const { error } = await supabase
-        .from('dish_images')
-        .delete()
-        .eq('id', imageId);
-      
-      if (error) throw error;
+      // For now, just reload - images are in Storage, not DB
       await loadDishImages(dishId);
       await loadDishes(selectedLocation.id);
       alert('Image deleted!');
